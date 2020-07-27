@@ -1,0 +1,3 @@
+torch
+transformers
+git+https://github.com/swfarnsworth/bratlib.git
