@@ -2,6 +2,7 @@ import argparse
 import typing as t
 from collections import namedtuple
 from copy import deepcopy
+from pathlib import Path
 
 import spacy
 import torch
@@ -25,8 +26,6 @@ def find_sentence(start: int, sentences: t.Dict[range, Span]):
 
 
 def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
-    rel = deepcopy(rel)
-
     if do_left:
         ent, other_ent = rel.arg1, rel.arg2
     else:
@@ -71,12 +70,15 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
         if [t.pos_ for t in new_span] != arg1_pos:
             continue
 
-        ent.spans = [(start, start + len(token))]
-        ent.mention = token
-
+        rel = deepcopy(rel)
         if do_left:
+            rel.arg1.spans = [(start, start + len(token))]
             new_offset = len(token) - len(ent.mention)
-            other_ent.spans = [(other_ent.spans[0][0] + new_offset, other_ent.spans[-1][-1] + new_offset)]
+            rel.arg1.mention = token
+            rel.arg2.spans = [(rel.arg2.spans[0][0] + new_offset, rel.arg2.spans[-1][-1] + new_offset)]
+        else:
+            rel.arg2.mention = token
+            rel.arg2.spans = [(start, start + len(token))]
 
         yield PseudoSentence(rel, new_sent)
 
@@ -110,21 +112,23 @@ def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('input_dataset')
-    parser.add_argument('output_ann_name')
-    parser.add_argument('output_txt_name')
+    parser.add_argument('output_directory')
     args = parser.parse_args()
 
-    # dataset = brat_data.BratDataset.from_directory('/home/steele/datasets/n2c2/training_n2c2')
     dataset = brat_data.BratDataset.from_directory(args.input_dataset)
+    output_dir = Path(args.output_directory)
 
-    output_txt = ""
-    output_offset = 0
+    for bf in dataset:
+        pseudo_ann = output_dir / ('pseudo_' + bf.name + '.ann')
+        pseudo_txt = output_dir / ('pseudo_' + bf.name + '.txt')
 
-    new_relations = []
-    new_entities = []
+        new_relations = []
+        new_entities = []
 
-    for f in dataset:
-        for pseudsent in pseudofy_file(f):
+        output_txt = ""
+        output_offset = 0
+
+        for pseudsent in pseudofy_file(bf):
             output_txt += pseudsent.sent
             new_rel = pseudsent.rel
             new_rel.arg1.spans = [(new_rel.arg1.spans[0][0] + output_offset, new_rel.arg1.spans[0][1] + output_offset)]
@@ -133,16 +137,14 @@ def main():
             new_relations.append(new_rel)
             new_entities += [new_rel.arg1, new_rel.arg2]
 
-    new_ann = type('Temp', (object,), {})()
-    new_ann.__dict__ = {'entities': sorted(new_entities), 'relations': sorted(new_relations)}
+        new_ann = object.__new__(brat_data.BratFile)
+        new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
 
-    ann_doc = brat_data.BratFile.__str__(new_ann)
+        with pseudo_ann.open('w+') as f:
+            f.write(str(new_ann))
 
-    with open(args.output_ann_name, 'w+') as f:
-        f.write(ann_doc)
-
-    with open(args.output_txt_name, 'w+') as f:
-        f.write(output_txt)
+        with pseudo_txt.open('w+') as f:
+            f.write(output_txt)
 
 
 if __name__ == '__main__':
