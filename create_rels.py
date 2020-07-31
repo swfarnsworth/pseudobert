@@ -35,7 +35,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
     span_start = sentence.start_char
 
     start = ent.spans[0][0] - span_start
-    end = ent.spans[0][-1] - span_start
+    end = ent.spans[-1][-1] - span_start
 
     try:
         arg1_pos = [t.pos_ for t in sentence.char_span(start, end)]
@@ -109,6 +109,41 @@ def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
         yield from filter(None, pseudofy_relation(rel, ent1_sent_a))
 
 
+def pseuofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
+    for bf in dataset:
+        pseudo_ann = output_dir / ('pseudo_' + bf.name + '.ann')
+        pseudo_txt = output_dir / ('pseudo_' + bf.name + '.txt')
+
+        new_relations = []
+        new_entities = []
+
+        output_txt = pseudo_txt.open('w+')
+        output_offset = 0
+
+        for i, pseudsent in enumerate(pseudofy_file(bf)):
+            if i % 100 == 0:
+                output_txt.flush()
+            output_txt.write(pseudsent.sent)
+            new_rel = pseudsent.rel
+            new_rel.arg1.spans = [(new_rel.arg1.spans[0][0] + output_offset, new_rel.arg1.spans[0][1] + output_offset)]
+            new_rel.arg2.spans = [(new_rel.arg2.spans[0][0] + output_offset, new_rel.arg2.spans[0][1] + output_offset)]
+
+            new_relations.append(new_rel)
+            new_entities += [new_rel.arg1, new_rel.arg2]
+
+            output_offset += len(pseudsent.sent)
+
+        output_txt.close()
+
+        new_ann = object.__new__(brat_data.BratFile)
+        new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
+
+        with pseudo_ann.open('w+') as f:
+            f.write(str(new_ann))
+
+    return brat_data.BratDataset.from_directory(output_dir)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('input_dataset')
@@ -118,33 +153,7 @@ def main():
     dataset = brat_data.BratDataset.from_directory(args.input_dataset)
     output_dir = Path(args.output_directory)
 
-    for bf in dataset:
-        pseudo_ann = output_dir / ('pseudo_' + bf.name + '.ann')
-        pseudo_txt = output_dir / ('pseudo_' + bf.name + '.txt')
-
-        new_relations = []
-        new_entities = []
-
-        output_txt = ""
-        output_offset = 0
-
-        for pseudsent in pseudofy_file(bf):
-            output_txt += pseudsent.sent
-            new_rel = pseudsent.rel
-            new_rel.arg1.spans = [(new_rel.arg1.spans[0][0] + output_offset, new_rel.arg1.spans[0][1] + output_offset)]
-            new_rel.arg2.spans = [(new_rel.arg2.spans[0][0] + output_offset, new_rel.arg2.spans[0][1] + output_offset)]
-            output_offset += len(pseudsent.sent)
-            new_relations.append(new_rel)
-            new_entities += [new_rel.arg1, new_rel.arg2]
-
-        new_ann = object.__new__(brat_data.BratFile)
-        new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
-
-        with pseudo_ann.open('w+') as f:
-            f.write(str(new_ann))
-
-        with pseudo_txt.open('w+') as f:
-            f.write(output_txt)
+    pseuofy_dataset(dataset, output_dir)
 
 
 if __name__ == '__main__':
