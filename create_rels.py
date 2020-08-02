@@ -19,7 +19,12 @@ PseudoSentence = namedtuple('PseudoSentence', 'rel sent')
 SentenceGenerator = t.Generator[PseudoSentence, None, None]
 
 
-def make_contig_rel(rel: brat_data.Relation) -> t.Union[brat_data.Relation, None]:
+def _make_contig_rel(rel: brat_data.Relation) -> t.Union[brat_data.Relation, None]:
+    """
+    Validator that creates a deep copy of a Relation where both args are converted to
+    ContigEntity, or returns None to reject Relations for which the args don't
+    represent contiguous mentions.
+    """
     if len(rel.arg1.spans) != 1 or len(rel.arg2.spans) != 1:
         return None
     rel = deepcopy(rel)
@@ -35,8 +40,8 @@ def adjust_spans(ent: brat_data.Entity, offset: int) -> t.Tuple[int, int]:
     return start, end
 
 
-def find_sentence(start: int, sentences: t.Dict[range, Span]):
-    for r, s in sentences.items():
+def find_sentence(start: int, sentences: t.List[t.Tuple[range, Span]]) -> Span:
+    for r, s in sentences:
         if start in r:
             return s
     raise RuntimeError(f'start value {start} not in any range')
@@ -44,7 +49,7 @@ def find_sentence(start: int, sentences: t.Dict[range, Span]):
 
 def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
 
-    rel = make_contig_rel(rel)
+    rel = _make_contig_rel(rel)
     if not rel:
         return
 
@@ -57,7 +62,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
     adjust_spans(other_ent, -span_start)
 
     try:
-        arg1_pos = [t.pos_ for t in sentence.char_span(start, end)]
+        original_pos = [t.pos_ for t in sentence.char_span(start, end)]
     except TypeError:
         # The char span doesn't line up with any tokens,
         # thus we can't figure out if the prediction is the right POS
@@ -86,7 +91,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
 
         if new_span is None:
             continue
-        if [t.pos_ for t in new_span] != arg1_pos:
+        if [t.pos_ for t in new_span] != original_pos:
             continue
 
         this_rel = deepcopy(rel)
@@ -112,17 +117,18 @@ def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
     with ann.txt_path.open() as f:
         text = f.read()
     doc = nlp(text)
-    sentences = {range(sent.start_char, sent.end_char + 1): sent for sent in doc.sents}
+    sentences = [(range(sent.start_char, sent.end_char + 1), sent) for sent in doc.sents]
 
     for rel in ann.relations:
-        # Make sure all entities are in the same sentence
-        first_ent_start, first_ent_end = rel.arg1.spans[0][0], rel.arg1.spans[-1][-1]
-        last_ent_start, last_ent_end = rel.arg2.spans[0][0], rel.arg2.spans[-1][-1]
+        rel = _make_contig_rel(rel)
+        if not rel:
+            continue
 
-        ent1_sent_a = find_sentence(first_ent_start, sentences)
-        ent1_sent_b = find_sentence(first_ent_end, sentences)
-        ent2_sent_a = find_sentence(last_ent_start, sentences)
-        ent2_sent_b = find_sentence(last_ent_end, sentences)
+        # Make sure all entities are in the same sentence
+        ent1_sent_a = find_sentence(rel.arg1.start, sentences)
+        ent1_sent_b = find_sentence(rel.arg1.end, sentences)
+        ent2_sent_a = find_sentence(rel.arg1.start, sentences)
+        ent2_sent_b = find_sentence(rel.arg1.end, sentences)
 
         if not (ent1_sent_a is ent1_sent_b is ent2_sent_a is ent2_sent_b):
             continue
