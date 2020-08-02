@@ -48,10 +48,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
     if not rel:
         return
 
-    if do_left:
-        ent, other_ent = rel.arg1, rel.arg2
-    else:
-        other_ent, ent = rel.arg1, rel.arg2
+    ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
 
     text = str(sentence)
     span_start = sentence.start_char
@@ -93,15 +90,15 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
             continue
 
         rel = deepcopy(rel)
+        ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
+
+        ent.spans = [(start, start + len(token))]
 
         if ent.start < other_ent.start:
-            ent.spans = [(start, start + len(token))]
             new_offset = len(token) - len(ent.mention)
-            ent.mention = token
             other_ent.spans = [(other_ent.start + new_offset, other_ent.end + new_offset)]
-        else:
-            ent.mention = token
-            ent.spans = [(start, start + len(token))]
+
+        ent.mention = token
 
         yield PseudoSentence(rel, new_sent)
 
@@ -149,8 +146,8 @@ def pseuofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_da
                 output_txt.flush()
             output_txt.write(pseudsent.sent)
             new_rel = pseudsent.rel
-            new_rel.arg1.spans = [(new_rel.arg1.spans[0][0] + output_offset, new_rel.arg1.spans[0][1] + output_offset)]
-            new_rel.arg2.spans = [(new_rel.arg2.spans[0][0] + output_offset, new_rel.arg2.spans[0][1] + output_offset)]
+            new_rel.arg1.spans = [(new_rel.arg1.start + output_offset, new_rel.arg1.end + output_offset)]
+            new_rel.arg2.spans = [(new_rel.arg2.start + output_offset, new_rel.arg2.end + output_offset)]
 
             new_relations.append(new_rel)
             new_entities += [new_rel.arg1, new_rel.arg2]
