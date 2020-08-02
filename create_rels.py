@@ -89,8 +89,8 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
         if [t.pos_ for t in new_span] != arg1_pos:
             continue
 
-        rel = deepcopy(rel)
-        ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
+        this_rel = deepcopy(rel)
+        ent, other_ent = (this_rel.arg1, this_rel.arg2) if do_left else (this_rel.arg2, this_rel.arg1)
 
         ent.spans = [(start, start + len(token))]
 
@@ -100,7 +100,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
 
         ent.mention = token
 
-        yield PseudoSentence(rel, new_sent)
+        yield PseudoSentence(this_rel, new_sent)
 
 
 def pseudofy_relation(rel: brat_data.Relation, sentence: Span, k=3) -> SentenceGenerator:
