@@ -8,6 +8,7 @@ import spacy
 import torch
 import transformers as tfs
 from bratlib import data as brat_data
+from bratlib.data.extensions.instance import ContigEntity
 from spacy.tokens.span import Span
 
 nlp = spacy.load('en_core_sci_lg')
@@ -16,6 +17,16 @@ bert_tokenizer = tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_unc
 
 PseudoSentence = namedtuple('PseudoSentence', 'rel sent')
 SentenceGenerator = t.Generator[PseudoSentence, None, None]
+
+
+def make_contig_rel(rel: brat_data.Relation) -> t.Union[brat_data.Relation, None]:
+    if len(rel.arg1.spans) != 1 or len(rel.arg2.spans) != 1:
+        return None
+    rel = deepcopy(rel)
+    rel.arg1.__class__ = ContigEntity
+    rel.arg2.__class__ = ContigEntity
+    return rel
+
 
 def adjust_spans(ent: brat_data.Entity, offset: int) -> t.Tuple[int, int]:
     start = ent.spans[0][0] + offset
@@ -33,10 +44,10 @@ def find_sentence(start: int, sentences: t.Dict[range, Span]):
 
 def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
 
-    if len(rel.arg1.spans) != 1 or len(rel.arg2.spans) != 1:
+    rel = make_contig_rel(rel)
+    if not rel:
         return
 
-    rel = deepcopy(rel)
     if do_left:
         ent, other_ent = rel.arg1, rel.arg2
     else:
@@ -82,14 +93,15 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
             continue
 
         rel = deepcopy(rel)
-        if do_left:
-            rel.arg1.spans = [(start, start + len(token))]
+
+        if ent.start < other_ent.start:
+            ent.spans = [(start, start + len(token))]
             new_offset = len(token) - len(ent.mention)
-            rel.arg1.mention = token
-            rel.arg2.spans = [(rel.arg2.spans[0][0] + new_offset, rel.arg2.spans[-1][-1] + new_offset)]
+            ent.mention = token
+            other_ent.spans = [(other_ent.start + new_offset, other_ent.end + new_offset)]
         else:
-            rel.arg2.mention = token
-            rel.arg2.spans = [(start, start + len(token))]
+            ent.mention = token
+            ent.spans = [(start, start + len(token))]
 
         yield PseudoSentence(rel, new_sent)
 
