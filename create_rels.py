@@ -17,6 +17,12 @@ bert_tokenizer = tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_unc
 PseudoSentence = namedtuple('PseudoSentence', 'rel sent')
 SentenceGenerator = t.Generator[PseudoSentence, None, None]
 
+def adjust_spans(ent: brat_data.Entity, offset: int) -> t.Tuple[int, int]:
+    start = ent.spans[0][0] + offset
+    end = ent.spans[-1][-1] + offset
+    ent.spans = [(start, end)]
+    return start, end
+
 
 def find_sentence(start: int, sentences: t.Dict[range, Span]):
     for r, s in sentences.items():
@@ -26,6 +32,11 @@ def find_sentence(start: int, sentences: t.Dict[range, Span]):
 
 
 def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
+
+    if len(rel.arg1.spans) != 1 or len(rel.arg2.spans) != 1:
+        return
+
+    rel = deepcopy(rel)
     if do_left:
         ent, other_ent = rel.arg1, rel.arg2
     else:
@@ -34,8 +45,8 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
     text = str(sentence)
     span_start = sentence.start_char
 
-    start = ent.spans[0][0] - span_start
-    end = ent.spans[-1][-1] - span_start
+    start, end = adjust_spans(ent, -span_start)
+    adjust_spans(other_ent, -span_start)
 
     try:
         arg1_pos = [t.pos_ for t in sentence.char_span(start, end)]
@@ -90,7 +101,8 @@ def pseudofy_relation(rel: brat_data.Relation, sentence: Span, k=3) -> SentenceG
 
 def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
     with ann.txt_path.open() as f:
-        doc = nlp(f.read())
+        text = f.read()
+    doc = nlp(text)
     sentences = {range(sent.start_char, sent.end_char + 1): sent for sent in doc.sents}
 
     for rel in ann.relations:
