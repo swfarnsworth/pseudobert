@@ -1,7 +1,7 @@
 import argparse
 import typing as t
-from collections import namedtuple
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
 
 import spacy
@@ -15,8 +15,21 @@ nlp = spacy.load('en_core_sci_lg')
 bert = tfs.BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased')
 bert_tokenizer = tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_uncased')
 
-PseudoSentence = namedtuple('PseudoSentence', 'rel sent')
+
+@dataclass
+class PseudoSentence:
+    rel: brat_data.Relation
+    sent: str
+    score: float
+    pos_match: bool
+
+
 SentenceGenerator = t.Generator[PseudoSentence, None, None]
+SentenceFilter = t.Callable[[PseudoSentence], bool]
+
+
+def _default_filter(ps: PseudoSentence):
+    return ps is not None and ps.pos_match
 
 
 def _make_contig_rel(rel: brat_data.Relation) -> t.Union[brat_data.Relation, None]:
@@ -81,18 +94,18 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
     scores = torch.softmax(result, dim=-1)
     mask_index = tokenized_sentence.index('[MASK]')
 
-    _, topk_indices = torch.topk(scores[mask_index, :], k, sorted=True)
+    topk_scores, topk_indices = torch.topk(scores[mask_index, :], k, sorted=True)
     topk_tokens = bert_tokenizer.convert_ids_to_tokens(topk_indices)
 
-    for token in topk_tokens:
+    for token, score in zip(topk_tokens, topk_scores):
         new_sent = text[:start] + token + text[end:]
         new_doc = nlp(new_sent)
         new_span = new_doc.char_span(start, start + len(token))
 
         if new_span is None:
             continue
-        if [t.pos_ for t in new_span] != original_pos:
-            continue
+
+        pos_match = [t.pos_ for t in new_span] == original_pos
 
         this_rel = deepcopy(rel)
         ent, other_ent = (this_rel.arg1, this_rel.arg2) if do_left else (this_rel.arg2, this_rel.arg1)
@@ -105,7 +118,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
 
         ent.mention = token
 
-        yield PseudoSentence(this_rel, new_sent)
+        yield PseudoSentence(this_rel, new_sent, float(score), pos_match)
 
 
 def pseudofy_relation(rel: brat_data.Relation, sentence: Span, k=1) -> SentenceGenerator:
@@ -133,7 +146,7 @@ def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
         if not (ent1_sent_a is ent1_sent_b is ent2_sent_a is ent2_sent_b):
             continue
 
-        yield from filter(None, pseudofy_relation(rel, ent1_sent_a))
+        yield from filter(_default_filter, pseudofy_relation(rel, ent1_sent_a))
 
 
 def pseuofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
@@ -150,14 +163,14 @@ def pseuofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_da
         for pseudsent in pseudofy_file(bf):
             output_txt += pseudsent.sent
             new_rel = pseudsent.rel
-            new_rel.arg1.spans = [(new_rel.arg1.start + output_offset, new_rel.arg1.end + output_offset)]
-            new_rel.arg2.spans = [(new_rel.arg2.start + output_offset, new_rel.arg2.end + output_offset)]
+
+            adjust_spans(new_rel.arg1, output_offset)
+            adjust_spans(new_rel.arg2, output_offset)
 
             new_relations.append(new_rel)
             new_entities += [new_rel.arg1, new_rel.arg2]
 
             output_offset += len(pseudsent.sent)
-            None
 
         with pseudo_txt.open('w') as f:
             f.write(output_txt)
