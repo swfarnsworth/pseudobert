@@ -108,7 +108,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
         yield PseudoSentence(this_rel, new_sent)
 
 
-def pseudofy_relation(rel: brat_data.Relation, sentence: Span, k=3) -> SentenceGenerator:
+def pseudofy_relation(rel: brat_data.Relation, sentence: Span, k=1) -> SentenceGenerator:
     yield from _pseudofy_side(rel, sentence, k, True)
     yield from _pseudofy_side(rel, sentence, k, False)
 
@@ -127,8 +127,8 @@ def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
         # Make sure all entities are in the same sentence
         ent1_sent_a = find_sentence(rel.arg1.start, sentences)
         ent1_sent_b = find_sentence(rel.arg1.end, sentences)
-        ent2_sent_a = find_sentence(rel.arg1.start, sentences)
-        ent2_sent_b = find_sentence(rel.arg1.end, sentences)
+        ent2_sent_a = find_sentence(rel.arg2.start, sentences)
+        ent2_sent_b = find_sentence(rel.arg2.end, sentences)
 
         if not (ent1_sent_a is ent1_sent_b is ent2_sent_a is ent2_sent_b):
             continue
@@ -144,13 +144,11 @@ def pseuofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_da
         new_relations = []
         new_entities = []
 
-        output_txt = pseudo_txt.open('w+')
+        output_txt = ''
         output_offset = 0
 
-        for i, pseudsent in enumerate(pseudofy_file(bf)):
-            if i % 100 == 0:
-                output_txt.flush()
-            output_txt.write(pseudsent.sent)
+        for pseudsent in pseudofy_file(bf):
+            output_txt += pseudsent.sent
             new_rel = pseudsent.rel
             new_rel.arg1.spans = [(new_rel.arg1.start + output_offset, new_rel.arg1.end + output_offset)]
             new_rel.arg2.spans = [(new_rel.arg2.start + output_offset, new_rel.arg2.end + output_offset)]
@@ -159,8 +157,10 @@ def pseuofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_da
             new_entities += [new_rel.arg1, new_rel.arg2]
 
             output_offset += len(pseudsent.sent)
+            None
 
-        output_txt.close()
+        with pseudo_txt.open('w') as f:
+            f.write(output_txt)
 
         new_ann = object.__new__(brat_data.BratFile)
         new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
