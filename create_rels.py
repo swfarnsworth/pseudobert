@@ -1,4 +1,5 @@
 import argparse
+import logging
 import typing as t
 from copy import deepcopy
 from dataclasses import dataclass
@@ -29,6 +30,8 @@ SentenceFilter = t.Callable[[PseudoSentence], bool]
 
 
 def _default_filter(ps: PseudoSentence):
+    """Returns False for None or PseudoSentence instances for which the POS
+    of the original and prediction do not match"""
     return ps is not None and ps.pos_match
 
 
@@ -57,7 +60,7 @@ def find_sentence(start: int, sentences: t.List[t.Tuple[range, Span]]) -> Span:
     for r, s in sentences:
         if start in r:
             return s
-    raise RuntimeError(f'start value {start} not in any range')
+    raise RuntimeError(f'start value {start} not in any range')  # This should never happen
 
 
 def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
@@ -65,6 +68,8 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
     rel = _make_contig_rel(rel)
     if not rel:
         return
+    # _make_contig_rel does make a deep copy but no interesting changes have been made yet
+    logging.info(f'Original instance: {rel}')
 
     ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
 
@@ -79,6 +84,7 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
     except TypeError:
         # The char span doesn't line up with any tokens,
         # thus we can't figure out if the prediction is the right POS
+        logging.info('Instance rejected; the spans given do not align with tokens according to the spaCy model')
         return None
 
     masked_sentence = text[:start] + '[MASK]' + text[end:]
@@ -113,12 +119,16 @@ def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True
         ent.spans = [(start, start + len(token))]
 
         if ent.start < other_ent.start:
+            # If the entity being changed comes before the one not being changed, the spans of the other must
+            # also be adjusted; it is not guaranteed that `rel.arg1` always comes before `rel.arg2`
             new_offset = len(token) - len(ent.mention)
-            other_ent.spans = [(other_ent.start + new_offset, other_ent.end + new_offset)]
+            adjust_spans(other_ent, new_offset)
 
         ent.mention = token
 
-        yield PseudoSentence(this_rel, new_sent, float(score), pos_match)
+        new_ps = PseudoSentence(this_rel, new_sent, float(score), pos_match)
+        logging.info(f'New instance: {new_ps}')
+        yield new_ps
 
 
 def pseudofy_relation(rel: brat_data.Relation, sentence: Span, k=1) -> SentenceGenerator:
@@ -150,6 +160,7 @@ def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
 
 
 def _psudofy_file(ann: brat_data.BratFile, output_dir: Path) -> None:
+    logging.info(f'Pseudofying file: {ann.ann_path}')
     pseudo_ann = output_dir / ('pseudo_' + ann.name + '.ann')
     pseudo_txt = output_dir / ('pseudo_' + ann.name + '.txt')
 
@@ -195,6 +206,8 @@ def main():
 
     dataset = brat_data.BratDataset.from_directory(args.input_dataset)
     output_dir = Path(args.output_directory)
+
+    logging.basicConfig(filename=output_dir / 'pseudobert.log', level=logging.INFO)
 
     pseudofy_dataset(dataset, output_dir)
 
