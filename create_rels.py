@@ -149,38 +149,41 @@ def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
         yield from filter(_default_filter, pseudofy_relation(rel, ent1_sent_a))
 
 
-def pseuofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
-    for bf in dataset:
-        pseudo_ann = output_dir / ('pseudo_' + bf.name + '.ann')
-        pseudo_txt = output_dir / ('pseudo_' + bf.name + '.txt')
+def _psudofy_file(ann: brat_data.BratFile, output_dir: Path) -> None:
+    pseudo_ann = output_dir / ('pseudo_' + ann.name + '.ann')
+    pseudo_txt = output_dir / ('pseudo_' + ann.name + '.txt')
 
-        new_relations = []
-        new_entities = []
+    new_relations = []
+    new_entities = []
 
-        output_txt = ''
-        output_offset = 0
+    output_txt = ''
+    output_offset = 0
 
-        for pseudsent in pseudofy_file(bf):
-            output_txt += pseudsent.sent
-            new_rel = pseudsent.rel
+    for pseudsent in pseudofy_file(ann):
+        output_txt += pseudsent.sent
+        new_rel = pseudsent.rel
 
-            adjust_spans(new_rel.arg1, output_offset)
-            adjust_spans(new_rel.arg2, output_offset)
+        adjust_spans(new_rel.arg1, output_offset)
+        adjust_spans(new_rel.arg2, output_offset)
 
-            new_relations.append(new_rel)
-            new_entities += [new_rel.arg1, new_rel.arg2]
+        new_relations.append(new_rel)
+        new_entities += [new_rel.arg1, new_rel.arg2]
 
-            output_offset += len(pseudsent.sent)
+        output_offset += len(pseudsent.sent)
 
-        with pseudo_txt.open('w') as f:
-            f.write(output_txt)
+    with pseudo_txt.open('w') as f:
+        f.write(output_txt)
 
-        new_ann = object.__new__(brat_data.BratFile)
-        new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
+    new_ann = object.__new__(brat_data.BratFile)
+    new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
 
-        with pseudo_ann.open('w+') as f:
-            f.write(str(new_ann))
+    with pseudo_ann.open('w+') as f:
+        f.write(str(new_ann))
 
+
+def pseudofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
+    for ann in dataset:
+        _psudofy_file(ann, output_dir)
     return brat_data.BratDataset.from_directory(output_dir)
 
 
@@ -193,7 +196,7 @@ def main():
     dataset = brat_data.BratDataset.from_directory(args.input_dataset)
     output_dir = Path(args.output_directory)
 
-    pseuofy_dataset(dataset, output_dir)
+    pseudofy_dataset(dataset, output_dir)
 
 
 if __name__ == '__main__':
