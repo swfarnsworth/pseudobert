@@ -12,10 +12,6 @@ from bratlib import data as brat_data
 from bratlib.data.extensions.instance import ContigEntity
 from spacy.tokens.span import Span
 
-nlp = spacy.load('en_core_sci_lg')
-bert = tfs.BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased')
-bert_tokenizer = tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_uncased')
-
 
 @dataclass
 class PseudoSentence:
@@ -63,139 +59,152 @@ def find_sentence(start: int, sentences: t.List[t.Tuple[range, Span]]) -> Span:
     raise RuntimeError(f'start value {start} not in any range')  # This should never happen
 
 
-def _pseudofy_side(rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
+class PseudoBertRelator:
 
-    rel = _make_contig_rel(rel)
-    if not rel:
-        return
-    # _make_contig_rel does make a deep copy but no interesting changes have been made yet
-    logging.info(f'Original instance: {rel}')
+    def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model, filter_: SentenceFilter):
+        self.bert = bert
+        self.bert_tokenizer = bert_tokenizer
+        self.nlp = spacy_model
+        self.filter = filter_
 
-    ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
+    @classmethod
+    def init_scientific(cls, filter_=_default_filter):
+        return cls(
+            bert=tfs.BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased'),
+            bert_tokenizer=tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_uncased'),
+            spacy_model=spacy.load('en_core_sci_lg'),
+            filter_=filter_
+        )
 
-    text = str(sentence)
-    span_start = sentence.start_char
+    def _pseudofy_side(self, rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
 
-    start, end = adjust_spans(ent, -span_start)
-    adjust_spans(other_ent, -span_start)
-
-    try:
-        original_pos = [t.pos_ for t in sentence.char_span(start, end)]
-    except TypeError:
-        # The char span doesn't line up with any tokens,
-        # thus we can't figure out if the prediction is the right POS
-        logging.info('Instance rejected; the spans given do not align with tokens according to the spaCy model')
-        return None
-
-    masked_sentence = text[:start] + '[MASK]' + text[end:]
-    tokenized_sentence = bert_tokenizer.tokenize(masked_sentence)
-    indexed_tokens = bert_tokenizer.convert_tokens_to_ids(tokenized_sentence)
-    token_tensor = torch.tensor(indexed_tokens)
-    mask_tensor = torch.tensor([token != '[MASK]' for token in tokenized_sentence], dtype=torch.float)
-
-    with torch.no_grad():
-        result = bert(token_tensor.unsqueeze(0), mask_tensor.unsqueeze(0), masked_lm_labels=None)
-
-    result = result[0].squeeze(0)
-    scores = torch.softmax(result, dim=-1)
-    mask_index = tokenized_sentence.index('[MASK]')
-
-    topk_scores, topk_indices = torch.topk(scores[mask_index, :], k, sorted=True)
-    topk_tokens = bert_tokenizer.convert_ids_to_tokens(topk_indices)
-
-    for token, score in zip(topk_tokens, topk_scores):
-        new_sent = text[:start] + token + text[end:]
-        new_doc = nlp(new_sent)
-        new_span = new_doc.char_span(start, start + len(token))
-
-        if new_span is None:
-            continue
-
-        pos_match = [t.pos_ for t in new_span] == original_pos
-
-        this_rel = deepcopy(rel)
-        ent, other_ent = (this_rel.arg1, this_rel.arg2) if do_left else (this_rel.arg2, this_rel.arg1)
-
-        ent.spans = [(start, start + len(token))]
-
-        if ent.start < other_ent.start:
-            # If the entity being changed comes before the one not being changed, the spans of the other must
-            # also be adjusted; it is not guaranteed that `rel.arg1` always comes before `rel.arg2`
-            new_offset = len(token) - len(ent.mention)
-            adjust_spans(other_ent, new_offset)
-
-        ent.mention = token
-
-        new_ps = PseudoSentence(this_rel, new_sent, float(score), pos_match)
-        logging.info(f'New instance: {new_ps}')
-        yield new_ps
-
-
-def pseudofy_relation(rel: brat_data.Relation, sentence: Span, k=1) -> SentenceGenerator:
-    yield from _pseudofy_side(rel, sentence, k, True)
-    yield from _pseudofy_side(rel, sentence, k, False)
-
-
-def pseudofy_file(ann: brat_data.BratFile) -> SentenceGenerator:
-    with ann.txt_path.open() as f:
-        text = f.read()
-    doc = nlp(text)
-    sentences = [(range(sent.start_char, sent.end_char + 1), sent) for sent in doc.sents]
-
-    for rel in ann.relations:
         rel = _make_contig_rel(rel)
         if not rel:
-            continue
+            return
+        # _make_contig_rel does make a deep copy but no interesting changes have been made yet
+        logging.info(f'Original instance: {rel}')
 
-        # Make sure all entities are in the same sentence
-        ent1_sent_a = find_sentence(rel.arg1.start, sentences)
-        ent1_sent_b = find_sentence(rel.arg1.end, sentences)
-        ent2_sent_a = find_sentence(rel.arg2.start, sentences)
-        ent2_sent_b = find_sentence(rel.arg2.end, sentences)
+        ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
 
-        if not (ent1_sent_a is ent1_sent_b is ent2_sent_a is ent2_sent_b):
-            continue
+        text = str(sentence)
+        span_start = sentence.start_char
 
-        yield from filter(_default_filter, pseudofy_relation(rel, ent1_sent_a))
+        start, end = adjust_spans(ent, -span_start)
+        adjust_spans(other_ent, -span_start)
 
+        try:
+            original_pos = [t.pos_ for t in sentence.char_span(start, end)]
+        except TypeError:
+            # The char span doesn't line up with any tokens,
+            # thus we can't figure out if the prediction is the right POS
+            logging.info('Instance rejected; the spans given do not align with tokens according to the spaCy model')
+            return None
 
-def _psudofy_file(ann: brat_data.BratFile, output_dir: Path) -> None:
-    logging.info(f'Pseudofying file: {ann.ann_path}')
-    pseudo_ann = output_dir / ('pseudo_' + ann.name + '.ann')
-    pseudo_txt = output_dir / ('pseudo_' + ann.name + '.txt')
+        masked_sentence = text[:start] + '[MASK]' + text[end:]
+        tokenized_sentence = self.bert_tokenizer.tokenize(masked_sentence)
+        indexed_tokens = self.bert_tokenizer.convert_tokens_to_ids(tokenized_sentence)
+        token_tensor = torch.tensor(indexed_tokens)
+        mask_tensor = torch.tensor([token != '[MASK]' for token in tokenized_sentence], dtype=torch.float)
 
-    new_relations = []
-    new_entities = []
+        with torch.no_grad():
+            result = self.bert(token_tensor.unsqueeze(0), mask_tensor.unsqueeze(0), masked_lm_labels=None)
 
-    output_txt = ''
-    output_offset = 0
+        result = result[0].squeeze(0)
+        scores = torch.softmax(result, dim=-1)
+        mask_index = tokenized_sentence.index('[MASK]')
 
-    for pseudsent in pseudofy_file(ann):
-        output_txt += pseudsent.sent
-        new_rel = pseudsent.rel
+        topk_scores, topk_indices = torch.topk(scores[mask_index, :], k, sorted=True)
+        topk_tokens = self.bert_tokenizer.convert_ids_to_tokens(topk_indices)
 
-        adjust_spans(new_rel.arg1, output_offset)
-        adjust_spans(new_rel.arg2, output_offset)
+        for token, score in zip(topk_tokens, topk_scores):
+            new_sent = text[:start] + token + text[end:]
+            new_doc = self.nlp(new_sent)
+            new_span = new_doc.char_span(start, start + len(token))
 
-        new_relations.append(new_rel)
-        new_entities += [new_rel.arg1, new_rel.arg2]
+            if new_span is None:
+                continue
 
-        output_offset += len(pseudsent.sent)
+            pos_match = [t.pos_ for t in new_span] == original_pos
 
-    with pseudo_txt.open('w') as f:
-        f.write(output_txt)
+            this_rel = deepcopy(rel)
+            ent, other_ent = (this_rel.arg1, this_rel.arg2) if do_left else (this_rel.arg2, this_rel.arg1)
 
-    new_ann = object.__new__(brat_data.BratFile)
-    new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
+            ent.spans = [(start, start + len(token))]
 
-    with pseudo_ann.open('w+') as f:
-        f.write(str(new_ann))
+            if ent.start < other_ent.start:
+                # If the entity being changed comes before the one not being changed, the spans of the other must
+                # also be adjusted; it is not guaranteed that `rel.arg1` always comes before `rel.arg2`
+                new_offset = len(token) - len(ent.mention)
+                adjust_spans(other_ent, new_offset)
 
+            ent.mention = token
 
-def pseudofy_dataset(dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
-    for ann in dataset:
-        _psudofy_file(ann, output_dir)
-    return brat_data.BratDataset.from_directory(output_dir)
+            new_ps = PseudoSentence(this_rel, new_sent, float(score), pos_match)
+            logging.info(f'New instance: {new_ps}')
+            yield new_ps
+
+    def pseudofy_relation(self, rel: brat_data.Relation, sentence: Span, k=1) -> SentenceGenerator:
+        yield from self._pseudofy_side(rel, sentence, k, True)
+        yield from self._pseudofy_side(rel, sentence, k, False)
+
+    def pseudofy_file(self, ann: brat_data.BratFile) -> SentenceGenerator:
+        with ann.txt_path.open() as f:
+            text = f.read()
+        doc = self.nlp(text)
+        sentences = [(range(sent.start_char, sent.end_char + 1), sent) for sent in doc.sents]
+
+        for rel in ann.relations:
+            rel = _make_contig_rel(rel)
+            if not rel:
+                continue
+
+            # Make sure all entities are in the same sentence
+            ent1_sent_a = find_sentence(rel.arg1.start, sentences)
+            ent1_sent_b = find_sentence(rel.arg1.end, sentences)
+            ent2_sent_a = find_sentence(rel.arg2.start, sentences)
+            ent2_sent_b = find_sentence(rel.arg2.end, sentences)
+
+            if not (ent1_sent_a is ent1_sent_b is ent2_sent_a is ent2_sent_b):
+                continue
+
+            yield from filter(self.filter, self.pseudofy_relation(rel, ent1_sent_a))
+
+    def _psudofy_file(self, ann: brat_data.BratFile, output_dir: Path) -> None:
+        logging.info(f'Pseudofying file: {ann.ann_path}')
+        pseudo_ann = output_dir / ('pseudo_' + ann.name + '.ann')
+        pseudo_txt = output_dir / ('pseudo_' + ann.name + '.txt')
+
+        new_relations = []
+        new_entities = []
+
+        output_txt = ''
+        output_offset = 0
+
+        for pseudsent in self.pseudofy_file(ann):
+            output_txt += pseudsent.sent
+            new_rel = pseudsent.rel
+
+            adjust_spans(new_rel.arg1, output_offset)
+            adjust_spans(new_rel.arg2, output_offset)
+
+            new_relations.append(new_rel)
+            new_entities += [new_rel.arg1, new_rel.arg2]
+
+            output_offset += len(pseudsent.sent)
+
+        with pseudo_txt.open('w') as f:
+            f.write(output_txt)
+
+        new_ann = object.__new__(brat_data.BratFile)
+        new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
+
+        with pseudo_ann.open('w+') as f:
+            f.write(str(new_ann))
+
+    def pseudofy_dataset(self, dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
+        for ann in dataset:
+            self._psudofy_file(ann, output_dir)
+        return brat_data.BratDataset.from_directory(output_dir)
 
 
 def main():
@@ -209,7 +218,8 @@ def main():
 
     logging.basicConfig(filename=output_dir / 'pseudobert.log', level=logging.INFO)
 
-    pseudofy_dataset(dataset, output_dir)
+    pbr = PseudoBertRelator.init_scientific()
+    pbr.pseudofy_dataset(dataset, output_dir)
 
 
 if __name__ == '__main__':
