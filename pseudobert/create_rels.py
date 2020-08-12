@@ -151,23 +151,30 @@ class PseudoBertRelator:
         with ann.txt_path.open() as f:
             text = f.read()
         doc = self.nlp(text)
-        sentences = [(range(sent.start_char, sent.end_char + 1), sent) for sent in doc.sents]
+        sentence_ranges = [(range(sent.start_char, sent.end_char + 1), sent) for sent in doc.sents]
 
         for rel in ann.relations:
             rel = _make_contig_rel(rel)
             if not rel:
                 continue
 
-            # Make sure all entities are in the same sentence
-            ent1_sent_a = find_sentence(rel.arg1.start, sentences)
-            ent1_sent_b = find_sentence(rel.arg1.end, sentences)
-            ent2_sent_a = find_sentence(rel.arg2.start, sentences)
-            ent2_sent_b = find_sentence(rel.arg2.end, sentences)
+            # Identify which sentence each entity is from
+            sentences = [find_sentence(arg, sentence_ranges) for arg in
+                         (rel.arg1.start, rel.arg1.end, rel.arg2.start, rel.arg2.end)]
 
-            if not (ent1_sent_a is ent1_sent_b is ent2_sent_a is ent2_sent_b):
+            first = min(sentences, key=lambda x: x.start_char)
+            last = max(sentences, key=lambda x: x.end_char)
+            if first is last:
+                # The ideal case, both args are in the same sentence
+                text_span = first
+            elif first.end_char + 1 == last.start_char:
+                # The args are in two adjacent sentences
+                text_span = doc[first.start_char:last.end_char]
+            else:
+                # The args are more than two sentences apart; we will ignore these
                 continue
 
-            yield from filter(self.filter, self.pseudofy_relation(rel, ent1_sent_a))
+            yield from filter(self.filter, self.pseudofy_relation(rel, text_span))
 
     def _psudofy_file(self, ann: brat_data.BratFile, output_dir: Path) -> None:
         logging.info(f'Pseudofying file: {ann.ann_path}')
