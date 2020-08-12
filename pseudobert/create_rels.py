@@ -1,4 +1,3 @@
-import argparse
 import logging
 import typing as t
 from copy import deepcopy
@@ -59,7 +58,20 @@ def find_sentence(start: int, sentences: t.List[t.Tuple[range, Span]]) -> Span:
     raise RuntimeError(f'start value {start} not in any range')  # This should never happen
 
 
-class PseudoBertRelator:
+class PseudoBertRelater:
+    """
+    This class contains the methods for generating pseudo relational data. The methods are provided in this
+    class instead of as stand-alone functions so that the BERT model, spaCy model, and filter need only
+    be specified once. If only the `pseudofy_dataset` method is wanted, one can create an instance but only
+    keep a reference to that method.
+
+    pseudofy_dataset = PseudoBertRelater.init_scientific().pseudofy_dataset
+
+    :ivar bert: transformers.BertForMaskedLM
+    :ivar bert_tokenizer: transformers.BertTokenizer
+    :ivar spacy_model: used for the sentencizer and POS tagger
+    :ivar filter_: used to accept or reject instances outputted by this class based on data contained in the PseudoSentence instance
+    """
 
     def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model, filter_: SentenceFilter):
         self.bert = bert
@@ -176,7 +188,7 @@ class PseudoBertRelator:
 
             yield from filter(self.filter, self.pseudofy_relation(rel, text_span))
 
-    def _psudofy_file(self, ann: brat_data.BratFile, output_dir: Path) -> None:
+    def _pseudofy_file(self, ann: brat_data.BratFile, output_dir: Path) -> None:
         logging.info(f'Pseudofying file: {ann.ann_path}')
         pseudo_ann = output_dir / ('pseudo_' + ann.name + '.ann')
         pseudo_txt = output_dir / ('pseudo_' + ann.name + '.txt')
@@ -210,5 +222,5 @@ class PseudoBertRelator:
 
     def pseudofy_dataset(self, dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
         for ann in dataset:
-            self._psudofy_file(ann, output_dir)
+            self._pseudofy_file(ann, output_dir)
         return brat_data.BratDataset.from_directory(output_dir)
