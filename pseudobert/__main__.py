@@ -4,7 +4,7 @@ from pathlib import Path
 
 from bratlib import data as brat_data
 
-from pseudobert.create_rels import PseudoBertRelator
+from pseudobert.create_rels import PseudoBertRelater
 
 
 def main():
@@ -18,7 +18,7 @@ def main():
 
     logging.basicConfig(filename=output_dir / 'pseudobert.log', level=logging.INFO)
 
-    pbr = PseudoBertRelator.init_scientific()
+    pbr = PseudoBertRelater.init_scientific()
     pbr.pseudofy_dataset(dataset, output_dir)
 
 
