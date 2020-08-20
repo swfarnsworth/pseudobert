@@ -9,6 +9,7 @@ import torch
 import transformers as tfs
 from bratlib import data as brat_data
 from bratlib.data.extensions.instance import ContigEntity
+from bratlib.tools.validation import validate_bratfile
 from spacy.tokens.span import Span
 
 
@@ -214,11 +215,15 @@ class PseudoBertRelater:
         with pseudo_txt.open('w') as f:
             f.write(output_txt)
 
-        new_ann = object.__new__(brat_data.BratFile)
-        new_ann.__dict__ = {'_entities': sorted(new_entities), '_relations': sorted(new_relations)}
+        new_ann = brat_data.BratFile.from_data()
+        new_ann._entities, new_ann._relations = sorted(new_entities), sorted(new_relations)
 
         with pseudo_ann.open('w+') as f:
             f.write(str(new_ann))
+
+        if __debug__:
+            ann = brat_data.BratFile.from_ann_path(pseudo_ann)
+            assert all(validate_bratfile(ann))
 
     def pseudofy_dataset(self, dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
         for ann in dataset:
