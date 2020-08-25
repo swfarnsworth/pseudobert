@@ -9,7 +9,6 @@ import torch
 import transformers as tfs
 from bratlib import data as brat_data
 from bratlib.data.extensions.instance import ContigEntity
-from bratlib.tools.validation import validate_bratfile
 from spacy.tokens.span import Span
 
 
@@ -119,6 +118,10 @@ class PseudoBertRelater:
         token_tensor = torch.tensor(indexed_tokens)
         mask_tensor = torch.tensor([token != '[MASK]' for token in tokenized_sentence], dtype=torch.float)
 
+        if len(token_tensor) > 512:
+            # This is the token limit we report on, but the limit depends on the BERT model
+            return None
+
         with torch.no_grad():
             result = self.bert(token_tensor.unsqueeze(0), mask_tensor.unsqueeze(0), masked_lm_labels=None)
 
@@ -175,17 +178,9 @@ class PseudoBertRelater:
             sentences = [find_sentence(arg, sentence_ranges) for arg in
                          (rel.arg1.start, rel.arg1.end, rel.arg2.start, rel.arg2.end)]
 
-            first = min(sentences, key=lambda x: x.start_char)
-            last = max(sentences, key=lambda x: x.end_char)
-            if first is last:
-                # The ideal case, both args are in the same sentence
-                text_span = first
-            elif first.end_char + 1 == last.start_char:
-                # The args are in two adjacent sentences
-                text_span = doc[first.start_char:last.end_char]
-            else:
-                # The args are more than two sentences apart; we will ignore these
-                continue
+            first = min(sentences, key=lambda x: x.start_char).start_char
+            last = max(sentences, key=lambda x: x.end_char).end_char
+            text_span = doc[first:last]
 
             yield from filter(self.filter, self.pseudofy_relation(rel, text_span))
 
@@ -220,10 +215,6 @@ class PseudoBertRelater:
 
         with pseudo_ann.open('w+') as f:
             f.write(str(new_ann))
-
-        if __debug__:
-            ann = brat_data.BratFile.from_ann_path(pseudo_ann)
-            assert all(validate_bratfile(ann))
 
     def pseudofy_dataset(self, dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
         for ann in dataset:
