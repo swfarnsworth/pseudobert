@@ -71,13 +71,15 @@ class PseudoBertRelater:
     :ivar bert_tokenizer: transformers.BertTokenizer
     :ivar spacy_model: used for the sentencizer and POS tagger
     :ivar filter_: used to accept or reject instances outputted by this class based on data contained in the PseudoSentence instance
+    :ivar k: top k predictions to use from BERT, defaults to 1
     """
 
-    def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model, filter_: SentenceFilter):
+    def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model, filter_: SentenceFilter, k=1):
         self.bert = bert
         self.bert_tokenizer = bert_tokenizer
         self.nlp = spacy_model
         self.filter = filter_
+        self.k = k
 
     @classmethod
     def init_scientific(cls, filter_=_default_filter):
@@ -88,7 +90,7 @@ class PseudoBertRelater:
             filter_=filter_
         )
 
-    def _pseudofy_side(self, rel: brat_data.Relation, sentence: Span, k: int, do_left=True) -> SentenceGenerator:
+    def _pseudofy_side(self, rel: brat_data.Relation, sentence: Span, do_left=True) -> SentenceGenerator:
 
         rel = _make_contig_rel(rel)
         if not rel:
@@ -129,7 +131,7 @@ class PseudoBertRelater:
         scores = torch.softmax(result, dim=-1)
         mask_index = tokenized_sentence.index('[MASK]')
 
-        topk_scores, topk_indices = torch.topk(scores[mask_index, :], k, sorted=True)
+        topk_scores, topk_indices = torch.topk(scores[mask_index, :], self.k, sorted=True)
         topk_tokens = self.bert_tokenizer.convert_ids_to_tokens(topk_indices)
 
         for token, score in zip(topk_tokens, topk_scores):
@@ -159,9 +161,9 @@ class PseudoBertRelater:
             logging.info(f'New instance: {new_ps}')
             yield new_ps
 
-    def pseudofy_relation(self, rel: brat_data.Relation, sentence: Span, k=1) -> SentenceGenerator:
-        yield from self._pseudofy_side(rel, sentence, k, True)
-        yield from self._pseudofy_side(rel, sentence, k, False)
+    def pseudofy_relation(self, rel: brat_data.Relation, sentence: Span) -> SentenceGenerator:
+        yield from self._pseudofy_side(rel, sentence, True)
+        yield from self._pseudofy_side(rel, sentence, False)
 
     def pseudofy_file(self, ann: brat_data.BratFile) -> SentenceGenerator:
         with ann.txt_path.open() as f:
