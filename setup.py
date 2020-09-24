@@ -8,6 +8,7 @@ setup(
     description='Pseudo data generation with BERT',
     author='Steele Farnsworth',
     install_requires=[
+        'more-itertools',
         'torch',
         'transformers',
         'scispacy',
