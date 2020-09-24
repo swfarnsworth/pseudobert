@@ -178,9 +178,12 @@ class PseudoBertRelater:
             sentences = [find_sentence(arg, sentence_ranges) for arg in
                          (rel.arg1.start, rel.arg1.end, rel.arg2.start, rel.arg2.end)]
 
-            first = min(sentences, key=lambda x: x.start_char).start_char
-            last = max(sentences, key=lambda x: x.end_char).end_char
-            text_span = doc[first:last]
+            if not (sentences[0] is sentences[1] is sentences[2] is sentences[3]):
+                # For this stage of development, we are only supporting relations contained in
+                # a single sentence, but we plan to progress
+                continue
+
+            text_span = sentences[0]
 
             yield from filter(self.filter, self.pseudofy_relation(rel, text_span))
 
