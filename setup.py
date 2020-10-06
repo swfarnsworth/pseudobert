@@ -13,6 +13,7 @@ setup(
         'transformers',
         'scispacy',
         'spacy',
+        'joblib',
         'bratlib @ git+https://github.com/swfarnsworth/bratlib.git',
         'en_core_sci_lg @ https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.2.5/en_core_sci_lg-0.2.5.tar.gz'
     ]
