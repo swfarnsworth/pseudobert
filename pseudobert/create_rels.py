@@ -221,10 +221,6 @@ class PseudoBertRelater:
         with pseudo_ann.open('w+') as f:
             f.write(str(new_ann))
 
-        if __debug__:
-            ann = brat_data.BratFile.from_ann_path(pseudo_ann)
-            assert all(validate_bratfile(ann))
-
     def pseudofy_dataset(self, dataset: brat_data.BratDataset, output_dir: Path) -> brat_data.BratDataset:
         for ann in dataset:
             self._pseudofy_file(ann, output_dir)
