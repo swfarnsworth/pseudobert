@@ -2,6 +2,7 @@ import logging
 import typing as t
 from copy import deepcopy
 from dataclasses import dataclass
+from operator import attrgetter
 from pathlib import Path
 
 import spacy
@@ -180,12 +181,18 @@ class PseudoBertRelater:
             sentences = [find_sentence(arg, sentence_ranges) for arg in
                          (rel.arg1.start, rel.arg1.end, rel.arg2.start, rel.arg2.end)]
 
-            if not (sentences[0] is sentences[1] is sentences[2] is sentences[3]):
-                # For this stage of development, we are only supporting relations contained in
-                # a single sentence, but we plan to progress
-                continue
+            sentences.sort(key=attrgetter('start_char'))
 
-            text_span = sentences[0]
+            if sentences[0] is sentences[1] is sentences[2] is sentences[3]:
+                # Everything is in the same sentence
+                text_span = sentences[0]
+            elif sentences[0].end_char > sentences[-1].start_char - 5:
+                # Everything is in two adjacent sentences, with five chars of leniency
+                # in case the sentencizer overlaps the sentences
+                text_span = doc[sentences[0].start_char:sentences[-1].end_char]
+            else:
+                # Entities are too far apart
+                continue
 
             yield from filter(self.filter, self.pseudofy_relation(rel, text_span))
 
