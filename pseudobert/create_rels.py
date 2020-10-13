@@ -9,7 +9,6 @@ import torch
 import transformers as tfs
 from bratlib import data as brat_data
 from bratlib.data.extensions.instance import ContigEntity
-from bratlib.tools.validation import validate_bratfile
 from spacy.tokens.span import Span
 
 
@@ -98,6 +97,7 @@ class PseudoBertRelater:
         logging.info(f'Original instance: {rel}')
 
         ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
+        logging.info(f'\tReplacing: {ent.mention}')
 
         text = str(sentence)
         span_start = sentence.start_char
@@ -110,7 +110,7 @@ class PseudoBertRelater:
         except TypeError:
             # The char span doesn't line up with any tokens,
             # thus we can't figure out if the prediction is the right POS
-            logging.info('Instance rejected; the spans given do not align with tokens according to the spaCy model')
+            logging.info('Instance rejected; the spans in GOLD do not align')
             return None
 
         masked_sentence = text[:start] + '[MASK]' + text[end:]
@@ -135,9 +135,10 @@ class PseudoBertRelater:
             new_span = new_doc.char_span(start, start + len(token))
 
             if new_span is None:
+                logging.info(f'Prediction rejected: {token}; the spans do not align')
                 continue
 
-            pos_match = [t.pos_ for t in new_span] == original_pos
+            pos_match = [tok.pos_ for tok in new_span] == original_pos
 
             this_rel = deepcopy(rel)
             ent, other_ent = (this_rel.arg1, this_rel.arg2) if do_left else (this_rel.arg2, this_rel.arg1)
@@ -153,6 +154,7 @@ class PseudoBertRelater:
             ent.mention = token
 
             new_ps = PseudoSentence(this_rel, new_sent, float(score), pos_match)
+            logging.info(f'\tNew entity: {ent.mention}')
             logging.info(f'New instance: {new_ps}')
             yield new_ps
 
@@ -184,6 +186,7 @@ class PseudoBertRelater:
                 # The args are in two adjacent sentences
                 text_span = doc[first.start_char:last.end_char]
             else:
+                logging.info(f'Instance rejected; the sentences in GOLD were not the same or adjacent')
                 # The args are more than two sentences apart; we will ignore these
                 continue
 
