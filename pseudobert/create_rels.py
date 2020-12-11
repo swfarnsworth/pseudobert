@@ -24,13 +24,13 @@ SentenceGenerator = t.Generator[PseudoSentence, None, None]
 SentenceFilter = t.Callable[[PseudoSentence], bool]
 
 
-def _default_filter(ps: PseudoSentence):
+def _default_filter(ps: PseudoSentence) -> bool:
     """Returns False for None or PseudoSentence instances for which the POS
     of the original and prediction do not match"""
     return ps is not None and ps.pos_match
 
 
-def _make_contig_rel(rel: brat_data.Relation) -> t.Union[brat_data.Relation, None]:
+def _make_contig_rel(rel: brat_data.Relation) -> t.Optional[brat_data.Relation]:
     """
     Validator that creates a deep copy of a Relation where both args are converted to
     ContigEntity, or returns None to reject Relations for which the args don't
@@ -70,11 +70,13 @@ class PseudoBertRelater:
     :ivar bert: transformers.BertForMaskedLM
     :ivar bert_tokenizer: transformers.BertTokenizer
     :ivar spacy_model: used for the sentencizer and POS tagger
-    :ivar filter_: used to accept or reject instances outputted by this class based on data contained in the PseudoSentence instance
+    :ivar filter_: used to accept or reject instances outputted by this class based on data contained in the
+    PseudoSentence instance
     :ivar k: top k predictions to use from BERT, defaults to 1
     """
 
-    def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model, filter_: SentenceFilter, k=1):
+    def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model,
+                 filter_: SentenceFilter, k=1):
         self.bert = bert
         self.bert_tokenizer = bert_tokenizer
         self.nlp = spacy_model
@@ -91,7 +93,6 @@ class PseudoBertRelater:
         )
 
     def _pseudofy_side(self, rel: brat_data.Relation, sentence: Span, do_left=True) -> SentenceGenerator:
-
         rel = _make_contig_rel(rel)
         if not rel:
             return
@@ -107,7 +108,7 @@ class PseudoBertRelater:
         adjust_spans(other_ent, -span_start)
 
         try:
-            original_pos = [t.pos_ for t in sentence.char_span(start, end)]
+            original_pos = [tok.pos_ for tok in sentence.char_span(start, end)]
         except TypeError:
             # The char span doesn't line up with any tokens,
             # thus we can't figure out if the prediction is the right POS
@@ -142,7 +143,7 @@ class PseudoBertRelater:
             if new_span is None:
                 continue
 
-            pos_match = [t.pos_ for t in new_span] == original_pos
+            pos_match = [tok.pos_ for tok in new_span] == original_pos
 
             this_rel = deepcopy(rel)
             ent, other_ent = (this_rel.arg1, this_rel.arg2) if do_left else (this_rel.arg2, this_rel.arg1)
