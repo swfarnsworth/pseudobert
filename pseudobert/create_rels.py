@@ -126,7 +126,7 @@ class PseudoBertRelater:
             return None
 
         with torch.no_grad():
-            result = self.bert(token_tensor.unsqueeze(0), mask_tensor.unsqueeze(0), masked_lm_labels=None)
+            result = self.bert(token_tensor.unsqueeze(0), mask_tensor.unsqueeze(0), labels=None)
 
         result = result[0].squeeze(0)
         scores = torch.softmax(result, dim=-1)
