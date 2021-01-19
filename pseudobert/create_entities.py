@@ -9,6 +9,8 @@ import transformers as tfs
 from bratlib import data as bd
 from spacy.tokens.span import Span
 
+MASK = '[MASK]'
+
 
 @dataclass
 class PseudoSentence:
@@ -92,11 +94,11 @@ class PseudoBertEntityCreator:
             logging.info('Instance rejected; the spans given do not align with tokens according to the spaCy model')
             return None
 
-        masked_sentence = text[:start] + '[MASK]' + text[end:]
+        masked_sentence = text[:start] + MASK + text[end:]
         tokenized_sentence = self.bert_tokenizer.tokenize(masked_sentence)
         indexed_tokens = self.bert_tokenizer.convert_tokens_to_ids(tokenized_sentence)
         token_tensor = torch.tensor(indexed_tokens)
-        mask_tensor = torch.tensor([token != '[MASK]' for token in tokenized_sentence], dtype=torch.float)
+        mask_tensor = torch.tensor([token != MASK for token in tokenized_sentence], dtype=torch.float)
 
         if len(token_tensor) > 512:
             # This is the token limit we report on, but the limit depends on the BERT model
@@ -107,7 +109,7 @@ class PseudoBertEntityCreator:
 
         result = result[0].squeeze(0)
         scores = torch.softmax(result, dim=-1)
-        mask_index = tokenized_sentence.index('[MASK]')
+        mask_index = tokenized_sentence.index(MASK)
 
         topk_scores, topk_indices = torch.topk(scores[mask_index, :], self.k, sorted=True)
         topk_tokens = self.bert_tokenizer.convert_ids_to_tokens(topk_indices)
