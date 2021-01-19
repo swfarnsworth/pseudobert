@@ -1,5 +1,4 @@
 import logging
-import typing as t
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -9,39 +8,17 @@ import transformers as tfs
 from bratlib import data as bd
 from spacy.tokens.span import Span
 
-MASK = '[MASK]'
+from . import _utils
+
+MASK = _utils.MASK
 
 
 @dataclass
-class PseudoSentence:
+class PseudoSentence(_utils.PseudoSentence):
     ent: bd.Entity
     sent: str
     score: float
     pos_match: bool
-
-
-SentenceGenerator = t.Generator[PseudoSentence, None, None]
-SentenceFilter = t.Callable[[PseudoSentence], bool]
-
-
-def _default_filter(ps: PseudoSentence) -> bool:
-    """Returns False for None or PseudoSentence instances for which the POS
-    of the original and prediction do not match"""
-    return ps is not None and ps.pos_match
-
-
-def adjust_spans(ent: bd.Entity, offset: int) -> t.Tuple[int, int]:
-    start = ent.spans[0][0] + offset
-    end = ent.spans[-1][-1] + offset
-    ent.spans = [(start, end)]
-    return start, end
-
-
-def find_sentence(start: int, sentences: t.List[t.Tuple[range, Span]]) -> Span:
-    for r, s in sentences:
-        if start in r:
-            return s
-    raise RuntimeError(f'start value {start} not in any range')  # This should never happen
 
 
 class PseudoBertEntityCreator:
@@ -62,7 +39,7 @@ class PseudoBertEntityCreator:
     """
 
     def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model,
-                 filter_: SentenceFilter, k=1):
+                 filter_: _utils.SentenceFilter, k=1):
         self.bert = bert
         self.bert_tokenizer = bert_tokenizer
         self.nlp = spacy_model
@@ -70,7 +47,7 @@ class PseudoBertEntityCreator:
         self.k = k
 
     @classmethod
-    def init_scientific(cls, filter_=_default_filter):
+    def init_scientific(cls, filter_=_utils.default_filter):
         return cls(
             bert=tfs.BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased'),
             bert_tokenizer=tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_uncased'),
@@ -78,13 +55,13 @@ class PseudoBertEntityCreator:
             filter_=filter_
         )
 
-    def pseudofy_entity(self, ent: bd.Entity, sentence: Span) -> SentenceGenerator:
+    def pseudofy_entity(self, ent: bd.Entity, sentence: Span) -> _utils.SentenceGenerator:
         logging.info(f'Original instance: {ent}')
 
         text = str(sentence)
         span_start = sentence.start_char
 
-        start, end = adjust_spans(ent, -span_start)
+        start, end = _utils.adjust_spans(ent, -span_start)
 
         try:
             original_pos = [tok.pos_ for tok in sentence.char_span(start, end)]
@@ -134,7 +111,7 @@ class PseudoBertEntityCreator:
             logging.info(f'New instance: {new_ps}')
             yield new_ps
 
-    def pseudofy_file_generator(self, ann: bd.BratFile) -> SentenceGenerator:
+    def pseudofy_file_generator(self, ann: bd.BratFile) -> _utils.SentenceGenerator:
         text = ann.txt_path.read_text()
         doc = self.nlp(text)
         sentence_ranges = [(range(sent.start_char, sent.end_char + 1), sent) for sent in doc.sents]
@@ -144,7 +121,7 @@ class PseudoBertEntityCreator:
                 continue
 
             # Identify which sentence the entity is from
-            sentences = [find_sentence(arg, sentence_ranges) for arg in [ent.spans[0][0], ent.spans[0][-1]]]
+            sentences = [_utils.find_sentence(arg, sentence_ranges) for arg in [ent.spans[0][0], ent.spans[0][-1]]]
 
             if sentences[0] is not sentences[1]:
                 # For this stage of development, we are only supporting relations contained in
@@ -167,7 +144,7 @@ class PseudoBertEntityCreator:
         for pseudsent in self.pseudofy_file_generator(ann):
             output_txt += pseudsent.sent
             new_ent = pseudsent.ent
-            adjust_spans(new_ent, output_offset)
+            _utils.adjust_spans(new_ent, output_offset)
 
             new_entities.append(new_ent)
             output_offset += len(pseudsent.sent)
