@@ -4,7 +4,7 @@ import typing_extensions as te
 from bratlib import data as bd
 from spacy.tokens.span import Span
 
-MASK = 'MASK'
+MASK = '[MASK]'
 
 
 class PseudoSentence(te.Protocol):
