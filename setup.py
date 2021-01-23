@@ -9,6 +9,7 @@ setup(
     author='Steele Farnsworth',
     install_requires=[
         'more-itertools',
+        'typing-extensions',
         'torch',
         'transformers',
         'scispacy',

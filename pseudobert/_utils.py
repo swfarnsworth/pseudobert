@@ -1,12 +1,13 @@
 import typing as t
+import typing_extensions as te
 
 from bratlib import data as bd
 from spacy.tokens.span import Span
 
-MASK = 'MASK'
+MASK = '[MASK]'
 
 
-class PseudoSentence(t.Protocol):
+class PseudoSentence(te.Protocol):
     sent: str
     score: float
     pos_match: bool
