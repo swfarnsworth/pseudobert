@@ -4,7 +4,7 @@ from bratlib.data import BratDataset
 from joblib import Parallel, delayed
 from more_itertools import chunked
 
-from pseudobert.create_rels import PseudoBertRelater
+from pseudobert.pseudofiers.create_rels import PseudoBertRelater
 
 
 @delayed

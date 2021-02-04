@@ -3,9 +3,8 @@ import typing as t
 from sys import argv
 
 from bratlib.data import Relation
-from bratlib.data.extensions.instance import ContigEntity
 
-from pseudobert.create_rels import PseudoSentence
+from pseudobert.pseudofiers.create_rels import PseudoSentence
 
 log_file = argv[1]
 pattern = re.compile(r'INFO:root:Original instance: (.*)\nINFO:root:New instance: (.*)\n')

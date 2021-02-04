@@ -11,7 +11,7 @@ from bratlib import data as bd
 from bratlib.data.extensions.instance import ContigEntity
 from spacy.tokens.span import Span
 
-from . import _utils
+from pseudobert.pseudofiers import _utils
 
 MASK = _utils.MASK
 
