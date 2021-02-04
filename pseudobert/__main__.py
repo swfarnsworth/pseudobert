@@ -4,7 +4,7 @@ from pathlib import Path
 
 from bratlib import data as brat_data
 
-from pseudobert.pseudofiers.create_rels import PseudoBertRelater
+from pseudobert.pseudofiers.relations import PseudoBertRelater
 
 
 def main():

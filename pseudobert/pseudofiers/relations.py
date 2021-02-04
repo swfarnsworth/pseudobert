@@ -8,7 +8,7 @@ import spacy
 import torch
 import transformers as tfs
 from bratlib import data as bd
-from bratlib.data.extensions.instance import ContigEntity
+from bratlib.data.extensions.annotation_types import ContigEntity
 from spacy.tokens.span import Span
 
 from pseudobert.pseudofiers import _utils

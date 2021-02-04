@@ -4,7 +4,7 @@ from sys import argv
 
 from bratlib.data import Relation
 
-from pseudobert.pseudofiers.create_rels import PseudoSentence
+from pseudobert.pseudofiers.relations import PseudoSentence
 
 log_file = argv[1]
 pattern = re.compile(r'INFO:root:Original instance: (.*)\nINFO:root:New instance: (.*)\n')
