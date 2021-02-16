@@ -2,16 +2,12 @@ import logging
 import typing as t
 from copy import deepcopy
 from dataclasses import dataclass
-from pathlib import Path
 
-import spacy
-import torch
-import transformers as tfs
 from bratlib import data as bd
 from bratlib.data.extensions.annotation_types import ContigEntity
 from spacy.tokens.span import Span
 
-from pseudobert.pseudofiers import _utils
+from pseudobert.pseudofiers import _utils, base_pseudofier
 
 MASK = _utils.MASK
 
@@ -38,7 +34,7 @@ def _make_contig_rel(rel: bd.Relation) -> t.Optional[bd.Relation]:
     return rel
 
 
-class PseudoBertRelater:
+class PseudoBertRelater(base_pseudofier.BasePseudofier):
     """
     This class contains the methods for generating pseudo relational data. The methods are provided in this
     class instead of as stand-alone functions so that the BERT model, spaCy model, and filter need only
@@ -55,31 +51,14 @@ class PseudoBertRelater:
     :ivar k: top k predictions to use from BERT, defaults to 1
     """
 
-    def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model,
-                 filter_: _utils.SentenceFilter, k=1):
-        self.bert = bert
-        self.bert_tokenizer = bert_tokenizer
-        self.nlp = spacy_model
-        self.filter = filter_
-        self.k = k
-
-    @classmethod
-    def init_scientific(cls, filter_=_utils.default_filter):
-        return cls(
-            bert=tfs.BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased'),
-            bert_tokenizer=tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_uncased'),
-            spacy_model=spacy.load('en_core_sci_lg'),
-            filter_=filter_
-        )
-
     def _pseudofy_side(self, rel: bd.Relation, sentence: Span, do_left=True) -> _utils.SentenceGenerator:
         rel = _make_contig_rel(rel)
         if not rel:
             return
         # _make_contig_rel does make a deep copy but no interesting changes have been made yet
-        logging.info(f'Original instance: {rel}')
 
         ent, other_ent = (rel.arg1, rel.arg2) if do_left else (rel.arg2, rel.arg1)
+        original_token = ent.mention
 
         text = str(sentence)
         span_start = sentence.start_char
@@ -92,35 +71,16 @@ class PseudoBertRelater:
         except TypeError:
             # The char span doesn't line up with any tokens,
             # thus we can't figure out if the prediction is the right POS
-            logging.info('Instance rejected; the spans given do not align with tokens according to the spaCy model')
+            self._output_log.append((text, original_token, None, None, None, 'TOKENIZATION DOES NOT ALIGN'))
             return None
 
-        masked_sentence = text[:start] + MASK + text[end:]
-        tokenized_sentence = self.bert_tokenizer.tokenize(masked_sentence)
-        indexed_tokens = self.bert_tokenizer.convert_tokens_to_ids(tokenized_sentence)
-        token_tensor = torch.tensor(indexed_tokens)
-        mask_tensor = torch.tensor([token != MASK for token in tokenized_sentence], dtype=torch.float)
-
-        if len(token_tensor) > 512:
-            # This is the token limit we report on, but the limit depends on the BERT model
-            return None
-
-        with torch.no_grad():
-            result = self.bert(token_tensor.unsqueeze(0), mask_tensor.unsqueeze(0), labels=None)
-
-        result = result[0].squeeze(0)
-        scores = torch.softmax(result, dim=-1)
-        mask_index = tokenized_sentence.index(MASK)
-
-        topk_scores, topk_indices = torch.topk(scores[mask_index, :], self.k, sorted=True)
-        topk_tokens = self.bert_tokenizer.convert_ids_to_tokens(topk_indices)
-
-        for token, score in zip(topk_tokens, topk_scores):
+        for token, score in self._call_bert(text, start, end):
             new_sent = text[:start] + token + text[end:]
             new_doc = self.nlp(new_sent)
             new_span = new_doc.char_span(start, start + len(token))
 
             if new_span is None:
+                self._output_log.append((text, original_token, token, None, None, 'NO POS MATCH'))
                 continue
 
             pos_match = [tok.pos_ for tok in new_span] == original_pos
@@ -139,14 +99,18 @@ class PseudoBertRelater:
             ent.mention = token
 
             new_ps = PseudoSentence(this_rel, new_sent, float(score), pos_match)
-            logging.info(f'New instance: {new_ps}')
+            self._output_log.append((text, original_token, token, float(score), pos_match, None))
             yield new_ps
 
-    def pseudofy_relation(self, rel: bd.Relation, sentence: Span) -> _utils.SentenceGenerator:
+    def _pseudofy_instance(self, rel: bd.Relation, sentence: Span) -> _utils.SentenceGenerator:
+        """
+        Generates pseudo instances given a relation and the spaCy Span in which it occurs. Passing a Span that does
+        not contain the relation given by `rel` has undefined behavior and will probably have incoherent results.
+        """
         yield from self._pseudofy_side(rel, sentence, True)
         yield from self._pseudofy_side(rel, sentence, False)
 
-    def pseudofy_file(self, ann: bd.BratFile) -> _utils.SentenceGenerator:
+    def pseudofy_file_generator(self, ann: bd.BratFile) -> _utils.SentenceGenerator:
         text = ann.txt_path.read_text()
         doc = self.nlp(text)
         sentence_ranges = [(range(sent.start_char, sent.end_char + 1), sent) for sent in doc.sents]
@@ -167,12 +131,10 @@ class PseudoBertRelater:
 
             text_span = sentences[0]
 
-            yield from filter(self.filter, self.pseudofy_relation(rel, text_span))
+            yield from filter(self.filter, self._pseudofy_instance(rel, text_span))
 
-    def _pseudofy_file(self, ann: bd.BratFile, output_dir: Path) -> None:
+    def pseudofy_file(self, ann: bd.BratFile) -> base_pseudofier.PseudoBratFile:
         logging.info(f'Pseudofying file: {ann.ann_path}')
-        pseudo_ann = output_dir / ('pseudo_' + ann.name + '.ann')
-        pseudo_txt = output_dir / ('pseudo_' + ann.name + '.txt')
 
         new_relations = []
         new_entities = []
@@ -180,7 +142,7 @@ class PseudoBertRelater:
         output_txt = ''
         output_offset = 0
 
-        for pseudsent in self.pseudofy_file(ann):
+        for pseudsent in self.pseudofy_file_generator(ann):
             output_txt += pseudsent.sent
             new_rel = pseudsent.rel
 
@@ -192,15 +154,9 @@ class PseudoBertRelater:
 
             output_offset += len(pseudsent.sent)
 
-        new_ann = bd.BratFile.from_data(entities=sorted(new_entities), relations=sorted(new_relations))
-        new_ann.ann_path, new_ann._txt_path = pseudo_ann, pseudo_txt
-
-        pseudo_txt.write_text(output_txt)
-        pseudo_ann.write_text(str(new_ann))
-
-        return new_ann
-
-    def pseudofy_dataset(self, dataset: bd.BratDataset, output_dir: Path) -> bd.BratDataset:
-        for ann in dataset:
-            self._pseudofy_file(ann, output_dir)
-        return bd.BratDataset.from_directory(output_dir)
+        return base_pseudofier.PseudoBratFile.from_pseudo_data(
+            original_ann=ann,
+            text=output_txt,
+            entities=sorted(new_entities),
+            relations=sorted(new_relations)
+        )

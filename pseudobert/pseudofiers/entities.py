@@ -1,14 +1,10 @@
 import logging
 from dataclasses import dataclass
-from pathlib import Path
 
-import spacy
-import torch
-import transformers as tfs
 from bratlib import data as bd
 from spacy.tokens.span import Span
 
-from pseudobert.pseudofiers import _utils
+from pseudobert.pseudofiers import _utils, base_pseudofier
 
 MASK = _utils.MASK
 
@@ -21,7 +17,7 @@ class PseudoSentence(_utils.PseudoSentence):
     pos_match: bool
 
 
-class PseudoBertEntityCreator:
+class PseudoBertEntityCreator(base_pseudofier.BasePseudofier):
     """
     This class contains the methods for generating pseudo NER data. The methods are provided in this
     class instead of as stand-alone functions so that the BERT model, spaCy model, and filter need only
@@ -38,24 +34,7 @@ class PseudoBertEntityCreator:
     :ivar k: top k predictions to use from BERT, defaults to 1
     """
 
-    def __init__(self, bert: tfs.BertForMaskedLM, bert_tokenizer: tfs.BertTokenizer, spacy_model,
-                 filter_: _utils.SentenceFilter, k=1):
-        self.bert = bert
-        self.bert_tokenizer = bert_tokenizer
-        self.nlp = spacy_model
-        self.filter = filter_
-        self.k = k
-
-    @classmethod
-    def init_scientific(cls, filter_=_utils.default_filter):
-        return cls(
-            bert=tfs.BertForMaskedLM.from_pretrained('allenai/scibert_scivocab_uncased'),
-            bert_tokenizer=tfs.BertTokenizer.from_pretrained('allenai/scibert_scivocab_uncased'),
-            spacy_model=spacy.load('en_core_sci_lg'),
-            filter_=filter_
-        )
-
-    def pseudofy_entity(self, ent: bd.Entity, sentence: Span) -> _utils.SentenceGenerator:
+    def _pseudofy_instance(self, ent: bd.Entity, sentence: Span) -> _utils.SentenceGenerator:
         logging.info(f'Original instance: {ent}')
 
         text = str(sentence)
@@ -71,27 +50,7 @@ class PseudoBertEntityCreator:
             logging.info('Instance rejected; the spans given do not align with tokens according to the spaCy model')
             return None
 
-        masked_sentence = text[:start] + MASK + text[end:]
-        tokenized_sentence = self.bert_tokenizer.tokenize(masked_sentence)
-        indexed_tokens = self.bert_tokenizer.convert_tokens_to_ids(tokenized_sentence)
-        token_tensor = torch.tensor(indexed_tokens)
-        mask_tensor = torch.tensor([token != MASK for token in tokenized_sentence], dtype=torch.float)
-
-        if len(token_tensor) > 512:
-            # This is the token limit we report on, but the limit depends on the BERT model
-            return None
-
-        with torch.no_grad():
-            result = self.bert(token_tensor.unsqueeze(0), mask_tensor.unsqueeze(0), labels=None)
-
-        result = result[0].squeeze(0)
-        scores = torch.softmax(result, dim=-1)
-        mask_index = tokenized_sentence.index(MASK)
-
-        topk_scores, topk_indices = torch.topk(scores[mask_index, :], self.k, sorted=True)
-        topk_tokens = self.bert_tokenizer.convert_ids_to_tokens(topk_indices)
-
-        for token, score in zip(topk_tokens, topk_scores):
+        for token, score in self._call_bert(text, start, end):
             new_sent = text[:start] + token + text[end:]
             new_doc = self.nlp(new_sent)
             new_span = new_doc.char_span(start, start + len(token))
@@ -130,12 +89,10 @@ class PseudoBertEntityCreator:
 
             text_span = sentences[0]
 
-            yield from filter(self.filter, self.pseudofy_entity(ent, text_span))
+            yield from filter(self.filter, self._pseudofy_instance(ent, text_span))
 
-    def pseudofy_file(self, ann: bd.BratFile, output_dir: Path) -> bd.BratFile:
+    def pseudofy_file(self, ann: bd.BratFile) -> bd.BratFile:
         logging.info(f'Pseudofying file: {ann.ann_path.name}')
-        pseudo_ann = output_dir / ('pseudo_' + ann.name + '.ann')
-        pseudo_txt = output_dir / ('pseudo_' + ann.name + '.txt')
 
         new_entities = []
         output_txt = ''
@@ -149,15 +106,8 @@ class PseudoBertEntityCreator:
             new_entities.append(new_ent)
             output_offset += len(pseudsent.sent)
 
-        new_ann = bd.BratFile.from_data(entities=sorted(new_entities))
-
-        pseudo_txt.write_text(output_txt)
-        pseudo_ann.write_text(str(new_ann))
-
-        new_ann.ann_path, new_ann._txt_path = pseudo_ann, pseudo_txt
-        return new_ann
-
-    def pseudofy_dataset(self, dataset: bd.BratDataset, output_dir: Path) -> bd.BratDataset:
-        for ann in dataset:
-            self.pseudofy_file(ann, output_dir)
-        return bd.BratDataset.from_directory(output_dir)
+        return base_pseudofier.PseudoBratFile.from_pseudo_data(
+            original_ann=ann,
+            text=output_txt,
+            entities=sorted(new_entities),
+        )
