@@ -17,6 +17,15 @@ SentenceGenerator = t.Generator[PseudoSentence, None, None]
 SentenceFilter = t.Callable[[PseudoSentence], bool]
 
 
+class Filter(SentenceFilter):
+
+    def __init__(self, p: float):
+        self.p = p
+
+    def __call__(self, x: PseudoSentence):
+        return x is not None and x.score >= self.p and x.pos_match
+
+
 def default_filter(ps: PseudoSentence) -> bool:
     """Returns False for None or PseudoSentence instances for which the POS
     of the original and prediction do not match"""
